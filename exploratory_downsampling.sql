@@ -11,7 +11,7 @@ WITH fraud_cases AS (
 normal_cases AS (
   SELECT * FROM `bloodlink-analytics.transaction_risk_analytics.v_engineered_fraud_features`
   WHERE Class = 0
-  ORDER BY RAND()
+  ORDER BY FARM_FINGERPRINT(CAST(Time AS STRING))
   LIMIT 492
 )
 SELECT * FROM fraud_cases
