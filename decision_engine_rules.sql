@@ -7,7 +7,7 @@ WITH risk_scoring AS (
             CASE WHEN V11 > 2.606 THEN 41 ELSE 0 END +
             CASE WHEN V4 > 3.647 THEN 8 ELSE 0 END
         ) AS risk_score
-    FROM `bloodlink-analytics.transaction_risk_analytics.v_engineered_fraud_features`
+    FROM `bloodlink-analytics.transaction_risk_analytics.test_split_records`
 ),
 decision_engine AS (
     SELECT *,
@@ -22,7 +22,7 @@ SELECT
     fraud_decision,
     COUNT(*) AS transaction_volume,
     SUM(Class) AS actual_fraud_caught,
-    ROUND(COUNT(*) / 284807 * 100, 2) AS operational_volume_percentage
+    ROUND(COUNT(*) / 85443 * 100, 2) AS operational_volume_percentage
 FROM decision_engine
 GROUP BY fraud_decision
 ORDER BY
