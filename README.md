@@ -2,54 +2,50 @@
 
 ### 🌐 Live Dashboard: [Click Here to View the Interactive Looker Studio Demo](https://datastudio.google.com/reporting/3ab72ebd-9384-4bd6-bceb-e298c8fb02c2)
 
-A cloud-native data engineering and risk analytics pipeline built inside **Google BigQuery** to process, score, and segment credit card transactions under highly imbalanced real-world conditions.
+A rule-based fraud detection pipeline built in Google BigQuery and Python, designed to flag risky credit card transactions while keeping customer friction low.
 
----
+## The Problem
 
-## 📊 Performance & Operational Impact
+The dataset has 284,807 transactions, but only 492 are fraud — a 0.17% fraud rate. With imbalance this severe, a system that just guesses "not fraud" every time would already be 99.83% "accurate" while catching zero fraud. The real goal isn't accuracy — it's building a system that flags the right small slice of transactions for action without burying a fraud team in false alarms.
 
-* **Dataset Size:** 284,807 transactions (Severe **0.17%** baseline fraud rate).
-* **System Precision:** **51.39%** (Highly efficient alert targeting).
-* **System Recall:** **71.54%** (Catches nearly 3/4 of all fraud).
+## How It Works
 
-### Automated Operational Funnel (As seen in the Live Demo):
+**1. Feature engineering**
+Raw transaction amounts are heavily skewed by a few large outliers, so a log transformation (`log(Amount + 1)`) is applied to make the data better behaved for analysis.
 
-* **APPROVE (99.15% of volume):** Instantly clears 282,373 legitimate users to completely eliminate customer friction.
-* **REVIEW (0.70% of volume):** Funnels 2,005 borderline anomalies into low-overhead manual triage.
-* **DECLINE (0.15% of volume):** Automatically blocks the highest-risk 428 transactions—**capturing 67.2% of all actual fraud (331/492 cases)** while impacting almost zero legitimate spend.
+**2. Feature selection**
+Instead of guessing which signals matter, features were ranked using effect size (Cohen's d) — a measure of how cleanly a feature separates fraud from normal transactions, accounting for variance, not just average difference. The top 3 features: **V14, V11, V4**.
 
----
+**3. Train/test split**
+Data was split 70/30 before any thresholds were chosen. All rule design — feature ranking, threshold scanning, weight assignment — happened only on the 70% training split. The 30% test split was touched exactly once, at the end, to measure real performance. This avoids tuning rules on the same data used to score them.
 
-## 🛠️ Technical Workspace Architecture
+**4. Rule weights**
+Each feature got a weight based on how precise it was on its own during training, scaled so the three weights sum to 100. Stronger standalone signals get more weight.
 
-The repository is structured to mirror a production engineering environment across three progressive layers:
+**5. Decision engine**
+Each transaction gets a risk score from 0–100 based on the three weighted rules:
+- Score ≥ 70 → **DECLINE**
+- Score ≥ 30 → **REVIEW**
+- Score < 30 → **APPROVE**
 
-1. **`feature_engineering_view.sql` (Data Preparation):** Streams raw transaction volumes natively into GCP and utilizes log-amount transformations ($\log(\text{Amount} + 1)$) to flatten extreme variance from major outlier currency sizes.
-2. **`exploratory_downsampling.sql` (Analytical Drilldown):** Downsamples the massive majority class to create a balanced 50/50 snapshot table, allowing rapid distribution analysis of hidden behavioral feature dimensions ($V14, V17$). Uses `FARM_FINGERPRINT`-based deterministic ordering rather than `RAND()`, so the sample is reproducible across runs.
-3. **`decision_engine_rules.sql` (Deployment & Rules Engine):** Authors a weighted risk-scoring engine ($0\text{--}100$) directly inside BigQuery to partition transaction volume into active operational treatment policies.
+## Results
 
----
+Measured on a held-out test split never used during rule design:
 
-## 🔬 Extended Validation: Rigorous Train/Test Feature Selection (`src/feature_selection_analysis.py`)
+- **Precision: 51.4%** — when the system flags a transaction, it's right about half the time.
+- **Recall: 71.5%** — the system catches about 7 out of 10 actual fraud cases.
+- **67.2% of all fraud** gets routed into the Decline tier, while only a small slice of total volume is ever auto-declined — keeping customer friction low.
 
-To validate that the BigQuery rule engine's feature and threshold choices weren't arbitrary, this script rebuilds the selection process end-to-end in Python with a methodologically stricter pipeline:
+## Why Rules Instead of a Machine Learning Model?
 
-* **Stratified 70/30 train/test split** — all feature ranking, threshold search, and weight derivation happen on the train split only. The test split is touched exactly once, at the end, to report held-out performance. This avoids the classic mistake of tuning rules on the same data used to score them.
-* **Effect-size feature ranking** (Cohen's d) over all 28 PCA features plus `Amount`/`log_amount`, instead of raw mean-gap comparison — accounts for feature variance, not just average separation.
-* **Auto-detected threshold direction** (does fraud sit above or below the normal mean for this feature) and **automatic threshold scanning** across each feature's own quantiles, rather than manually guessed cutoffs.
-* **Redundancy check** using both Pearson and Spearman correlation across every selected feature, to confirm the chosen rules aren't duplicating the same signal.
-* **Data-driven rule weights**, derived directly from each feature's standalone precision on the train set (scaled to sum to 100), instead of manually assigned weights.
+A rule-based system is transparent. If a transaction is declined, you can point to exactly which feature and threshold triggered it. That kind of explainability matters for fraud and compliance teams who need to justify automated decisions, not just trust a black box.
 
-**Held-out test results (85,443 transactions, 148 fraud cases):**
+## Tech Stack
 
-| Tier | Volume | Volume % | Fraud Caught | % of Total Fraud |
-|------|--------|----------|---------------|-------------------|
-| APPROVE | 84,747 | 99.19% | 27 | 18.2% |
-| REVIEW | 514 | 0.60% | 29 | 19.6% |
-| DECLINE | 182 | 0.21% | 92 | 62.2% |
+- **SQL / Google BigQuery** — feature engineering, downsampled exploratory analysis, and the decision engine.
+- **Python (pandas, scikit-learn)** — effect-size ranking, train/test split, threshold search, and held-out validation of the BigQuery rules.
 
-**Decline-tier precision: 50.5%, recall: 62.2%** — closely matching the original BigQuery engine's 51.4% precision, despite being measured on a stricter, never-before-seen 30% test split. This independently validates that the original result reflects a real, generalizable pattern rather than an artifact of the specific dataset slice it was measured on.
+## Limitations
 
-Note: the original BigQuery numbers (67.2% fraud caught, 331/492 cases) were measured across the *full* 284,807-row dataset, while this script's numbers are measured on a held-out *test split* (148 fraud cases) that was never used during feature or threshold selection — the two are calculated on different-sized fraud samples and aren't expected to match exactly, but land in the same range, which is the relevant check.
-
-**Known limitation:** the redundancy check (Pearson + Spearman) catches linear and monotonic relationships between features, but not more complex non-monotonic dependencies — mutual information would be needed to fully rule those out, and is left as future work.
+- The dataset's V1–V28 features are anonymized (PCA-transformed), so they can't be tied to real business meaning — this is a proof of concept for the methodology, not a production-ready system.
+- Redundancy between selected features was checked using Pearson and Spearman correlation, which catches linear and monotonic relationships but not more complex dependencies.
