@@ -112,6 +112,22 @@ def main():
 
     print(f"\nReview+Decline Precision: {combined_precision*100:.2f}%")
     print(f"Review+Decline Recall: {combined_recall*100:.2f}%")
+    print("\nSending 30% stratified test split dataset to Google BigQuery...")
+    try:
+        import pandas_gbq
+        
+        destination_table = "transaction_risk_analytics.test_split_records"
+        project_id = "bloodlink-analytics"
+        
+        pandas_gbq.to_gbq(
+            test_df,
+            destination_table,
+            project_id=project_id,
+            if_exists="replace"
+        )
+        print("Upload successful! Table 'test_split_records' is live in BigQuery.")
+    except Exception as e:
+        print(f"Error uploading to BigQuery: {str(e)}")
 
 
 if __name__ == "__main__":
